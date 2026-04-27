@@ -1,0 +1,28 @@
+Spotify Lyrics Overlay WPF
+
+Runtime
+- Full package: no extra runtime is required.
+- Lite package: install .NET 10 Desktop Runtime x64 first:
+  https://dotnet.microsoft.com/download/dotnet/10.0
+
+How to use
+1. Run SpotifyLyricsOverlay.Wpf.exe.
+2. Create a Spotify Developer app at https://developer.spotify.com/dashboard.
+3. Add this Redirect URI to the Spotify app:
+   http://127.0.0.1:8766/callback
+4. Copy the Spotify app Client ID into this app.
+5. Click Connect and finish Spotify authorization in your browser.
+
+Controls
+- Ctrl+Alt+L toggles lock.
+- When locked, click the tray icon or use the tray menu to unlock.
+- Use Style to change lyric size and color.
+- Use 1 line / 2 lines to change lyric layout.
+
+Data location
+Settings, token, and lyrics cache are stored in:
+%APPDATA%\SpotifyLyricsOverlayWpf
+
+Network services
+- Spotify Web API is used for playback status.
+- LRCLIB is used for lyrics lookup.
