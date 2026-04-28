@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using SpotifyLyricsOverlay.Wpf.Models;
 using SpotifyLyricsOverlay.Wpf.Services;
@@ -41,6 +42,7 @@ public partial class MainWindow : Window
         _playerTimer.Interval = TimeSpan.FromMilliseconds(2500);
         _playerTimer.Tick += async (_, _) => await PollPlayerAsync();
         _lyricsTimer.Tick += (_, _) => RenderSyncedLyrics();
+        SizeChanged += (_, _) => QueueMarqueeUpdate();
     }
 
     protected override async void OnSourceInitialized(EventArgs e)
@@ -171,7 +173,7 @@ public partial class MainWindow : Window
                 ResetPlaybackState();
                 TrackTitle.Text = "Waiting for Spotify";
                 TrackArtist.Text = "Play a song in Spotify.";
-                RenderLines("No active track", "");
+                RenderLines("No active track", "", 0, 0);
                 return;
             }
 
@@ -186,7 +188,7 @@ public partial class MainWindow : Window
             {
                 _lyrics = null;
                 _lyricsTrackId = "";
-                RenderLines("Loading lyrics...", "");
+                RenderLines("Loading lyrics...", "", 0, 0);
                 _lyrics = await _lyricsService.GetLyricsAsync(track);
                 _lyricsTrackId = track.Id;
                 RenderSyncedLyrics();
@@ -194,7 +196,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            if (_track is null) RenderLines(ex.Message, "");
+            if (_track is null) RenderLines(ex.Message, "", 0, 0);
             else TrackArtist.Text = "Spotify unavailable; retrying...";
         }
         finally
@@ -266,14 +268,14 @@ public partial class MainWindow : Window
 
         if (_lyrics.Source == "plain")
         {
-            RenderLines(_lyrics.Plain.ElementAtOrDefault(0) ?? "No synced lyrics", _lyrics.Plain.ElementAtOrDefault(1) ?? "");
+            RenderLines(_lyrics.Plain.ElementAtOrDefault(0) ?? "No synced lyrics", _lyrics.Plain.ElementAtOrDefault(1) ?? "", 0, 0);
             ScheduleLyricsRender(TimeSpan.FromSeconds(5));
             return;
         }
 
         if (_lyrics.Source != "synced" || _lyrics.Lines.Count == 0)
         {
-            RenderLines("No synced lyrics", "");
+            RenderLines("No synced lyrics", "", 0, 0);
             ScheduleLyricsRender(TimeSpan.FromSeconds(5));
             return;
         }
@@ -286,7 +288,11 @@ public partial class MainWindow : Window
             else break;
         }
 
-        RenderLines(GetLineText(activeIndex, "..."), GetLineText(activeIndex + 1, ""));
+        RenderLines(
+            GetLineText(activeIndex, "..."),
+            GetLineText(activeIndex + 1, ""),
+            GetLyricLineDuration(activeIndex),
+            GetLyricLineDuration(activeIndex + 1));
         delay = GetNextRenderDelay(activeIndex, progress);
         ScheduleLyricsRender(delay);
     }
@@ -313,10 +319,79 @@ public partial class MainWindow : Window
         _lyricsTimer.Start();
     }
 
-    private void RenderLines(string current, string next)
+    private int GetLyricLineDuration(int index)
+    {
+        if (_lyrics is null || index < 0 || index >= _lyrics.Lines.Count) return 0;
+        if (index + 1 >= _lyrics.Lines.Count) return 4500;
+        return Math.Max(1200, _lyrics.Lines[index + 1].Time - _lyrics.Lines[index].Time);
+    }
+
+    private void RenderLines(string current, string next, int currentDurationMs, int nextDurationMs)
     {
         CurrentLine.Text = current;
         NextLine.Text = _settings.LineMode == "two" ? next : "";
+        CurrentLine.Tag = currentDurationMs;
+        NextLine.Tag = nextDurationMs;
+        QueueMarqueeUpdate();
+    }
+
+    private void QueueMarqueeUpdate()
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            ApplyMarquee(CurrentLineClip, CurrentLine);
+            ApplyMarquee(NextLineClip, NextLine);
+        }, DispatcherPriority.Loaded);
+    }
+
+    private static void ApplyMarquee(FrameworkElement clip, System.Windows.Controls.TextBlock line)
+    {
+        if (line.RenderTransform is not TranslateTransform transform)
+        {
+            transform = new TranslateTransform();
+            line.RenderTransform = transform;
+        }
+
+        transform.BeginAnimation(TranslateTransform.XProperty, null);
+        line.Measure(new System.Windows.Size(double.PositiveInfinity, double.PositiveInfinity));
+
+        var textWidth = line.DesiredSize.Width;
+        var clipWidth = clip.ActualWidth;
+        if (clipWidth <= 0 || textWidth <= 0 || string.IsNullOrWhiteSpace(line.Text))
+        {
+            transform.X = 0;
+            line.HorizontalAlignment = System.Windows.HorizontalAlignment.Center;
+            return;
+        }
+
+        var overflow = textWidth - clipWidth;
+        if (overflow <= 8)
+        {
+            transform.X = 0;
+            line.HorizontalAlignment = System.Windows.HorizontalAlignment.Center;
+            return;
+        }
+
+        line.HorizontalAlignment = System.Windows.HorizontalAlignment.Left;
+        var distance = overflow + 28;
+        var availableMs = line.Tag is int duration ? duration : 0;
+        var durationSeconds = availableMs > 0
+            ? Math.Max(1.8, Math.Min(16, availableMs / 1000d - 0.35))
+            : Math.Max(1.8, Math.Min(16, distance / 36d));
+        var delaySeconds = availableMs > 0
+            ? Math.Max(0.25, Math.Min(0.9, availableMs / 1000d * 0.16))
+            : 0.75;
+
+        transform.X = 0;
+        var animation = new DoubleAnimation
+        {
+            From = 0,
+            To = -distance,
+            Duration = TimeSpan.FromSeconds(durationSeconds),
+            BeginTime = TimeSpan.FromSeconds(delaySeconds),
+            FillBehavior = FillBehavior.HoldEnd
+        };
+        transform.BeginAnimation(TranslateTransform.XProperty, animation);
     }
 
     private async void OnConnect(object sender, RoutedEventArgs e)
@@ -395,6 +470,7 @@ public partial class MainWindow : Window
         NextLine.FontSize = Math.Round(_settings.FontSize * 0.62);
         CurrentLine.Foreground = BrushFromHex(_settings.TextColor, 1);
         NextLine.Foreground = BrushFromHex(_settings.TextColor, 0.58);
+        QueueMarqueeUpdate();
     }
 
     private async void OnToggleLock(object sender, RoutedEventArgs e)
