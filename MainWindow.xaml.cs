@@ -28,6 +28,8 @@ public partial class MainWindow : Window
     private int _progressAtStart;
     private int _lastProgressMs;
     private string _lyricsTrackId = "";
+    private string _renderedCurrent = "";
+    private string _renderedNext = "";
     private bool _pollInFlight;
     private bool _isQuitting;
     private bool _isLocked;
@@ -212,6 +214,8 @@ public partial class MainWindow : Window
         _lyricsTrackId = "";
         _progressAtStart = 0;
         _lastProgressMs = 0;
+        _renderedCurrent = "";
+        _renderedNext = "";
     }
 
     private int CurrentProgress()
@@ -328,8 +332,13 @@ public partial class MainWindow : Window
 
     private void RenderLines(string current, string next, int currentDurationMs, int nextDurationMs)
     {
+        var nextText = _settings.LineMode == "two" ? next : "";
+        if (_renderedCurrent == current && _renderedNext == nextText) return;
+        _renderedCurrent = current;
+        _renderedNext = nextText;
+
         CurrentLine.Text = current;
-        NextLine.Text = _settings.LineMode == "two" ? next : "";
+        NextLine.Text = nextText;
         CurrentLine.Tag = currentDurationMs;
         NextLine.Tag = nextDurationMs;
         QueueMarqueeUpdate();
@@ -353,26 +362,26 @@ public partial class MainWindow : Window
         }
 
         transform.BeginAnimation(TranslateTransform.XProperty, null);
+        line.Width = double.NaN;
         line.Measure(new System.Windows.Size(double.PositiveInfinity, double.PositiveInfinity));
 
         var textWidth = line.DesiredSize.Width;
         var clipWidth = clip.ActualWidth;
         if (clipWidth <= 0 || textWidth <= 0 || string.IsNullOrWhiteSpace(line.Text))
         {
+            line.Width = double.NaN;
             transform.X = 0;
-            line.HorizontalAlignment = System.Windows.HorizontalAlignment.Center;
             return;
         }
 
+        line.Width = textWidth;
         var overflow = textWidth - clipWidth;
         if (overflow <= 8)
         {
-            transform.X = 0;
-            line.HorizontalAlignment = System.Windows.HorizontalAlignment.Center;
+            transform.X = Math.Max(0, (clipWidth - textWidth) / 2);
             return;
         }
 
-        line.HorizontalAlignment = System.Windows.HorizontalAlignment.Left;
         var distance = overflow + 28;
         var availableMs = line.Tag is int duration ? duration : 0;
         var durationSeconds = availableMs > 0
@@ -430,7 +439,11 @@ public partial class MainWindow : Window
     {
         LineModeButton.Content = _settings.LineMode == "two" ? "2 lines" : "1 line";
         CurrentLine.FontSize = _settings.LineMode == "two" ? _settings.FontSize : _settings.FontSize * 1.12;
+        NextLineClip.Visibility = _settings.LineMode == "two" ? Visibility.Visible : Visibility.Collapsed;
         NextLine.Visibility = _settings.LineMode == "two" ? Visibility.Visible : Visibility.Collapsed;
+        _renderedCurrent = "";
+        _renderedNext = "";
+        QueueMarqueeUpdate();
     }
 
     private void OnToggleStyle(object sender, RoutedEventArgs e)
